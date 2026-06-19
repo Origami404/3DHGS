@@ -1,0 +1,33 @@
+name: half_gaussian_splatting_h100
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch::pytorch=2.5.*
+  - pytorch::torchvision=0.20.*
+  - pytorch::torchaudio=2.5.*
+  - pytorch::pytorch-cuda=12.4
+  - nvidia::cuda-nvcc=12.4
+  - nvidia::cuda-cudart-dev=12.4
+  - nvidia::cuda-toolkit=12.4
+  - gcc_linux-64=11
+  - gxx_linux-64=11
+  - libxcrypt
+  - mkl
+  - ninja
+  - numpy<2
+  - scipy
+  - pillow
+  - libtiff
+  - plyfile
+  - tqdm
+  - matplotlib
+  - tensorboard
+  - pip:
+    - setuptools<70
+    - wheel
+    - lpips==0.1.4
