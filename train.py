@@ -11,6 +11,7 @@
 
 import os
 import torch
+import csv
 from random import randint
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
@@ -40,6 +41,11 @@ except ImportError:
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from,normal_lr, finetune, load_iteration):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
+    loss_log_path = os.path.join(dataset.model_path, "train_loss.csv")
+    loss_curve_path = os.path.join(dataset.model_path, "train_loss_curve.png")
+    with open(loss_log_path, "w", newline="") as loss_log_file:
+        loss_writer = csv.writer(loss_log_file)
+        loss_writer.writerow(["iteration", "l1_loss", "total_loss", "ema_loss"])
     gaussians = GaussianModel(dataset.sh_degree)
     # finetune = True
     scene = Scene(dataset, gaussians)#, load_iteration=load_iteration)  #, finetune=finetune)
@@ -98,9 +104,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+            with open(loss_log_path, "a", newline="") as loss_log_file:
+                loss_writer = csv.writer(loss_log_file)
+                loss_writer.writerow([iteration, Ll1.item(), loss.item(), ema_loss_for_log])
             if iteration % 10 == 0:
                 progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
                 progress_bar.update(10)
+            if iteration % 1000 == 0 or iteration == opt.iterations:
+                save_loss_curve(loss_log_path, loss_curve_path)
             if iteration == opt.iterations:
                 progress_bar.close()
 
@@ -170,6 +181,39 @@ def prepare_output_and_logger(args):
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
+
+def save_loss_curve(csv_path, output_path):
+    iterations = []
+    l1_losses = []
+    total_losses = []
+    ema_losses = []
+    try:
+        with open(csv_path, "r", newline="") as loss_log_file:
+            reader = csv.DictReader(loss_log_file)
+            for row in reader:
+                iterations.append(int(row["iteration"]))
+                l1_losses.append(float(row["l1_loss"]))
+                total_losses.append(float(row["total_loss"]))
+                ema_losses.append(float(row["ema_loss"]))
+    except Exception as err:
+        print(f"Could not save loss curve: {err}")
+        return
+
+    if not iterations:
+        return
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(iterations, total_losses, label="total_loss", alpha=0.55)
+    plt.plot(iterations, l1_losses, label="l1_loss", alpha=0.55)
+    plt.plot(iterations, ema_losses, label="ema_loss", linewidth=2.0)
+    plt.xlabel("Iteration")
+    plt.ylabel("Loss")
+    plt.title("Training Loss")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
 
 def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     if tb_writer:
