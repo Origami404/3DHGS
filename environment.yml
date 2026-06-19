@@ -1,10 +1,20 @@
 name: half_gaussian_splatting
 channels:
+  - nvidia
   - pytorch
   - conda-forge
   - defaults
 dependencies:
+  - cuda-cudart-dev=11.6.55
+  - cuda-nvcc=11.6.55
   - cudatoolkit=11.6
+  - gcc_linux-64=10
+  - gxx_linux-64=10
+  - libxcrypt
+  - mkl<2024
+  - ninja
+  - pillow=9.2.0
+  - libtiff=4.4.0
   - plyfile
   - python=3.7.13
   - pip=22.3.1
