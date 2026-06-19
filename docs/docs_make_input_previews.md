@@ -1,112 +1,134 @@
-# 输入图像 Preview 生成方法
+# 基于 COLMAP 相机位姿生成渲染 Preview
 
-本文档记录如何为 `t2data/Train_colmap` 生成输入图像预览，方便确认训练数据到底是什么场景。
+本文档记录如何生成真正“按相机位姿”的预览图，而不是简单按文件名抽样图片。
 
-## 生成内容
+生成结果会把 4 张图拼成一张大图：
 
-脚本会在输出目录中创建：
+1. 原始输入图片。
+2. 使用同一个 COLMAP 相机位置和朝向渲染出的图片。
+3. 在同一个相机中心上向左轻微偏转视角后的渲染图。
+4. 在同一个相机中心上向右轻微偏转视角后的渲染图。
+
+大图底部会写入该图片对应的 COLMAP 相机信息，例如：
 
 ```text
-output/Train_3dhgs/previews/
-  input_contact_sheet.jpg
-  input_first_00001.jpg
-  input_middle_00151.jpg
-  input_last_00301.jpg
+00001.jpg
+image_id: 1
+camera_id: 1
+camera_center_world: [-3.008989 -0.110865 -3.752764]
+forward_world: [ 0.477066 -0.057587  0.876979]
+```
+
+## 数据来源
+
+图片和视角的对应关系来自 COLMAP sparse model：
+
+```text
+t2data/Train_colmap/images/00001.jpg
+t2data/Train_colmap/sparse/0/images.bin
+t2data/Train_colmap/sparse/0/cameras.bin
 ```
 
 其中：
 
-- `input_contact_sheet.jpg` 是多张输入图像组成的拼图。
-- `input_first_00001.jpg` 是第一张输入图像的缩略预览。
-- `input_middle_00151.jpg` 是中间视角图像的缩略预览。
-- `input_last_00301.jpg` 是最后一张输入图像的缩略预览。
+- `images/00001.jpg` 只保存图像像素。
+- `sparse/0/images.bin` 保存每张图片的 COLMAP 外参：`image_id`、`qvec`、`tvec`、`camera_id`、`name`。
+- `sparse/0/cameras.bin` 保存相机内参。
+- 脚本通过 `images.bin` 中的 `name == "00001.jpg"` 找到该图片的真实相机位姿。
 
-## 运行脚本
-
-在仓库根目录执行：
-
-```bash
-cat > .make_previews.py <<'PY'
-from pathlib import Path
-from PIL import Image, ImageDraw
-
-outdir = Path("output/Train_3dhgs/previews")
-outdir.mkdir(parents=True, exist_ok=True)
-
-imgs = sorted(Path("t2data/Train_colmap/images").glob("*.jpg"))
-print("num images", len(imgs))
-
-for path in imgs[:5] + imgs[len(imgs) // 2:len(imgs) // 2 + 2] + imgs[-3:]:
-    image = Image.open(path)
-    print(path, image.size, image.mode)
-
-# 选择若干代表性视角生成拼图。
-selected_indices = [0, 8, 16, 40, 80, 120, 160, 200, 240, 280, 300]
-selected_paths = [imgs[index] for index in selected_indices if index < len(imgs)]
-
-thumbs = []
-for path in selected_paths:
-    image = Image.open(path).convert("RGB")
-    image.thumbnail((320, 180))
-
-    canvas = Image.new("RGB", (320, 210), "white")
-    canvas.paste(image, ((320 - image.width) // 2, 0))
-
-    draw = ImageDraw.Draw(canvas)
-    draw.text((8, 185), path.name, fill=(0, 0, 0))
-    thumbs.append(canvas)
-
-cols = 3
-rows = (len(thumbs) + cols - 1) // cols
-sheet = Image.new("RGB", (cols * 320, rows * 210), (240, 240, 240))
-
-for index, thumb in enumerate(thumbs):
-    x = (index % cols) * 320
-    y = (index // cols) * 210
-    sheet.paste(thumb, (x, y))
-
-sheet.save(outdir / "input_contact_sheet.jpg", quality=95)
-
-# 额外保存首张、中间、末张图像的较大缩略预览。
-for label, index in [("first", 0), ("middle", len(imgs) // 2), ("last", len(imgs) - 1)]:
-    image = Image.open(imgs[index]).convert("RGB")
-    image.thumbnail((960, 540))
-    image.save(outdir / f"input_{label}_{imgs[index].stem}.jpg", quality=95)
-
-print("preview dir", outdir)
-PY
-
-conda run -n half_gaussian_splatting python .make_previews.py
-rm -f .make_previews.py
-```
-
-## 查看生成结果
-
-列出生成文件：
-
-```bash
-find output/Train_3dhgs/previews -maxdepth 1 -type f -print
-```
-
-打开拼图：
-
-```bash
-xdg-open output/Train_3dhgs/previews/input_contact_sheet.jpg
-```
-
-如果当前环境没有桌面图像查看器，也可以把该文件下载到本地查看。
-
-## 本次 Train 场景结果
-
-本次 `t2data/Train_colmap` 的输入数据为：
-
-- 图片数量：`301`
-- 图片格式：`RGB`
-- 图片分辨率：`980x545`
-- 场景内容：Tanks&Temples 的 `Train` 火车场景，一辆 Western Pacific 713 火车的多视角照片。
-
-生成的拼图路径：
+## 脚本位置
 
 ```text
-output/Train_3dhgs/previews/input_contact_sheet.jpg
+scripts/make_pose_render_preview.py
 ```
+
+该脚本会：
+
+- 读取 `sparse/0/images.bin` 和 `sparse/0/cameras.bin`。
+- 根据图片名找到对应 COLMAP camera pose。
+- 加载训练好的 `point_cloud.ply`。
+- 渲染同位姿图片。
+- 固定相机中心，对相机朝向做 `yaw -8°` 和 `yaw +8°` 的轻微偏转，再各渲染一张。
+- 拼接原图、同视角渲染、两个偏转视角渲染，并在底部写入相机信息。
+
+## 使用 H100 环境生成 Preview
+
+当前机器上裸跑 PyTorch 时 `cuda:0` 可能映射到 L20。为了确保使用 H100，需要加：
+
+```bash
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0
+```
+
+生成 `00001.jpg` 的 preview：
+
+```bash
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0 \
+conda run -n half_gaussian_splatting_h100 \
+python scripts/make_pose_render_preview.py \
+  -s t2data/Train_colmap \
+  -m output/Train_3dhgs_h100 \
+  --image 00001.jpg \
+  --iteration 30000
+```
+
+默认输出：
+
+```text
+output/Train_3dhgs_h100/previews/pose_render_preview_00001.jpg
+```
+
+## 指定输出路径
+
+```bash
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0 \
+conda run -n half_gaussian_splatting_h100 \
+python scripts/make_pose_render_preview.py \
+  -s t2data/Train_colmap \
+  -m output/Train_3dhgs_h100 \
+  --image 00001.jpg \
+  --iteration 30000 \
+  --output output/Train_3dhgs_h100/previews/my_preview.jpg
+```
+
+## 调整偏转角度
+
+默认偏转角度是 `8` 度。可以用 `--yaw` 修改：
+
+```bash
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0 \
+conda run -n half_gaussian_splatting_h100 \
+python scripts/make_pose_render_preview.py \
+  -s t2data/Train_colmap \
+  -m output/Train_3dhgs_h100 \
+  --image 00001.jpg \
+  --iteration 30000 \
+  --yaw 5
+```
+
+## 生成其他图片的 Preview
+
+例如生成 `00151.jpg`：
+
+```bash
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0 \
+conda run -n half_gaussian_splatting_h100 \
+python scripts/make_pose_render_preview.py \
+  -s t2data/Train_colmap \
+  -m output/Train_3dhgs_h100 \
+  --image 00151.jpg \
+  --iteration 30000
+```
+
+输出会是：
+
+```text
+output/Train_3dhgs_h100/previews/pose_render_preview_00151.jpg
+```
+
+## 注意事项
+
+- 这份 preview 是基于 COLMAP 相机位姿生成的，不是按文件名随便抽样。
+- “同视角渲染”使用原图在 `images.bin` 中对应的 `qvec/tvec`。
+- “偏转视角渲染”保持相机中心不变，只改变相机朝向。
+- 如果 `--image` 指定的图片不在 `images.bin` 中，脚本会报错，因为无法确定它的真实相机位姿。
+- 如果模型目录下没有对应的 `point_cloud/iteration_*/point_cloud.ply`，脚本也会报错。
