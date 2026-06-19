@@ -3,3 +3,5 @@ t2data/*
 
 __pycache__/
 *.pyc
+
+output
